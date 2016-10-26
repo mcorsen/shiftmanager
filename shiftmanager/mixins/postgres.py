@@ -54,21 +54,22 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         self.pg_args = kwargs
         return self.pg_connection
 
-    def pg_copy_table_to_csv(self, csv_file_path, pg_table_name=None,
-                             pg_select_statement=None):
+    def pg_copy_table_to_file(self, output_file_path, pg_table_name=None,
+                              pg_select_statement=None):
         """
-        Use Postgres to COPY the given table_name to a csv file at the given
-        csv_path.
+        Use Postgres to COPY the given table_name to a csv or json file
+        at the given output_path.
 
         Additionally, fetch the row count of the given table_name for
         further processing.
 
         Parameters
         ----------
-        csv_file_path: str
-            File path for the CSV to be written to by Postgres
+        output_file_path: str
+            File path for the output from Postgres;
+            output format will be determined by extension ('.csv' or '.json')
         pg_table_name: str
-            Optional Postgres table name to be written to CSV if user
+            Optional Postgres table name to be written to if user
             does not want to specify subset
         pg_select_statement: str
             Optional select statement if user wants to specify subset of table
@@ -78,18 +79,23 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         -------
         row_count: int
         """
-        copy = ' '.join([
-            "COPY {pg_table_or_select}",
-            "TO '{csv_fp}'",
-            "DELIMITER ','",
-            "FORCE QUOTE *",
-            "CSV;"])
+        if output_file_path.endswith('json'):
+            copy = ' '.join([
+                "COPY (SELECT row_to_json(x) FROM {pg_table_or_select} AS x)",
+                "TO '{tmp_fp}';"])
+        else:
+            copy = ' '.join([
+                "COPY {pg_table_or_select}",
+                "TO '{tmp_fp}'",
+                "DELIMITER ','",
+                "FORCE QUOTE *",
+                "CSV;"])
 
         if pg_select_statement is None and pg_table_name is not None:
 
             formatted_statement = copy.format(
                 pg_table_or_select=pg_table_name,
-                csv_fp=csv_file_path)
+                tmp_fp=output_file_path)
 
         elif pg_select_statement is not None and pg_table_name is None:
 
@@ -99,7 +105,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
             formatted_statement = copy.format(
                 pg_table_or_select=pg_select_statement,
-                csv_fp=csv_file_path)
+                tmp_fp=output_file_path)
 
         else:
             ValueError("Please enter a table name or a select statement.")
@@ -111,17 +117,17 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         return row_count
 
-    def get_csv_chunk_generator(self, csv_file_path, row_count, chunks):
+    def get_file_chunk_generator(self, file_path, row_count, chunks):
         """
-        Given the csv_file_path and a row_count, yield chunks number
+        Given the file_path and a row_count, yield *chunks* number
         of string chunks
 
         Parameters
         ----------
-        csv_file_path: str
-            File path for the CSV written by Postgres
+        file_path: str
+            File path for the output written by Postgres
         row_count: int
-            Number of rows in the CSV
+            Number of rows in the output file
         chunks: int
             Number of chunks to yield
 
@@ -131,7 +137,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         """
         # Yield only a single chunk if the number of rows is small.
         if row_count <= chunks:
-            with codecs.open(csv_file_path, mode="r", encoding='utf-8') as f:
+            with codecs.open(file_path, mode="r", encoding='utf-8') as f:
                 yield f.read()
             raise StopIteration
 
@@ -147,7 +153,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         boundary_index = 0
         boundary = right_closed_boundary[boundary_index]
         one_mebibyte = 1048576
-        with codecs.open(csv_file_path, mode="r", encoding='utf-8',
+        with codecs.open(file_path, mode="r", encoding='utf-8',
                          buffering=one_mebibyte) as f:
             for line_number, row in enumerate(f):
                 chunk_lines.append(row)
@@ -176,7 +182,8 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             return template.format(key_id=key_id,
                                    secret_key_id=secret_key_id)
 
-    def _create_copy_statement(self, table_name, manifest_key_path):
+    def _create_copy_statement(self, table_name, manifest_key_path,
+                               fmt='csv'):
         """Create Redshift copy statement for given table_name and
         the provided manifest_key_path.
 
@@ -186,24 +193,27 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             Redshift table name to COPY to
         manifest_key_path: str
             Complete S3 path to .manifest file
+        fmt: str
+            Value for the Redshift FORMAT parameter;
+            recommended values are "csv" (default) or "json 'auto'"
 
         Returns
         -------
         str
         """
-
         return """copy {table_name}
                   from '{manifest_key_path}'
                   credentials '{aws_credentials}'
                   manifest
-                  csv;""".format(table_name=table_name,
-                                 manifest_key_path=manifest_key_path,
-                                 aws_credentials=self.aws_credentials)
+                  {fmt};""".format(table_name=table_name, fmt=fmt,
+                                   manifest_key_path=manifest_key_path,
+                                   aws_credentials=self.aws_credentials)
 
     def copy_table_to_redshift(self, redshift_table_name,
                                bucket_name, key_prefix, slices,
                                pg_table_name=None, pg_select_statement=None,
-                               temp_file_dir=None, cleanup_s3=True):
+                               temp_file_dir=None, cleanup_s3=True,
+                               delete_statement=None):
         """
         Write the contents of a Postgres table to Redshift.
         Write the table to the given bucket under the given
@@ -212,16 +222,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         Parameters
         ----------
         redshift_table_name: str
-            Redshift table to which CSVs are to be written
+            Redshift table to which json files are to be written
         bucket_name: str
             The name of the S3 bucket to be written to
         key_prefix: str
             The key path within the bucket to write to
         slices: int
             The number of slices in user's Redshift cluster, used to
-            split CSV into chunks for parallel data loading
+            split json files into chunks for parallel data loading
         pg_table_name: str
-            Optional Postgres table name to be written to CSV if user
+            Optional Postgres table name to be written to json if user
             does not want to specify subset
         pg_select_statement: str
             Optional select statement if user wants to specify subset of table
@@ -242,12 +252,12 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         else:
             final_key_prefix = key_prefix
 
-        with tempfile.NamedTemporaryFile(dir=temp_file_dir) as ntf:
-            csv_temp_path = ntf.name
-            row_count = self.pg_copy_table_to_csv(
-                csv_temp_path, pg_table_name=pg_table_name,
+        with tempfile.NamedTemporaryFile(dir=temp_file_dir, suffix='.json') as ntf:
+            jsontemp_path = ntf.name
+            row_count = self.pg_copy_table_to_file(
+                jsontemp_path, pg_table_name=pg_table_name,
                 pg_select_statement=pg_select_statement)
-            chunk_generator = self.get_csv_chunk_generator(csv_temp_path,
+            chunk_generator = self.get_file_chunk_generator(jsontemp_path,
                                                            row_count, slices)
             backfill_timestamp = datetime.utcnow().strftime(
                 "%Y-%m-%d_%H-%M-%S")
@@ -257,7 +267,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                 chunk_name = "_".join([backfill_timestamp, "chunk",
                                        str(count)])
                 complete_key_path = "".join([final_key_prefix,
-                                             chunk_name, '.csv'])
+                                             chunk_name, '.json'])
 
                 print('Writing {} to S3...'.format(complete_key_path))
                 self.write_string_to_s3(chunk, bucket, complete_key_path)
@@ -282,12 +292,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                                                   encrypt_key=True)
             complete_manifest_path = "".join(['s3://', bucket.name,
                                               manifest_key_path])
-            copy_statement = self._create_copy_statement(
-                redshift_table_name, complete_manifest_path)
+            statements = ""
+            if delete_statement:
+                statements += delete_statement + ';\n'
+
+            statements += self._create_copy_statement(
+                redshift_table_name, complete_manifest_path, fmt="json 'auto'")
 
             print('Copying from S3 to Redshift...')
             try:
-                self.execute(copy_statement)
+                self.execute(statements)
             except:
                 # Clean up S3 bucket in the event of any exception
                 if cleanup_s3:
