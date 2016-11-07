@@ -192,7 +192,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
             "TO PROGRAM $$"
             "split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
-            "--filter='gzip > $FILE.gz'"
+            "--filter='gzip > $FILE.json.gz'"
             """ | sed 's/\\*"/\"/g'"""
             "$$"
         ).format(pg_table_or_select=pg_table_or_select,
