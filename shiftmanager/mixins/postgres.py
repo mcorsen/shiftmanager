@@ -58,37 +58,6 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         self.pg_args = kwargs
         return self.pg_connection
 
-    def pg_copy_statement(self,
-                          pg_table_name=None,
-                          pg_select_statement=None):
-        """
-        Create a Postgres COPY statement.
-
-        Parameters
-        ----------
-        pg_table_name: str
-            Optional Postgres table name to be written to if user
-            does not want to specify subset
-        pg_select_statement: str
-            Optional select statement if user wants to specify subset of table
-
-
-        Returns
-        -------
-        A SQL string giving the COPY statement
-        """
-        if pg_select_statement is None and pg_table_name is not None:
-            pg_table_or_select = pg_table_name
-        elif pg_select_statement is not None and pg_table_name is None:
-            pg_table_or_select = '(' + pg_select_statement + ')'
-        else:
-            ValueError("Exactly one of pg_table_name or pg_select_statement "
-                       "must be specified.")
-        copy = ' '.join([
-            "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x)",
-            "TO PROGRAM;"]).format(pg_table_or_select=pg_table_or_select)
-        return copy
-
     @property
     def aws_credentials(self):
         if self.aws_account_id and self.aws_role_name:
@@ -121,9 +90,9 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         str
         """
         return """\
-        copy {table_name}
-        from '{manifest_key_path}'
-        credentials '{aws_credentials}'
+        COPY {table_name}
+        FROM '{manifest_key_path}'
+        CREDENTIALS '{aws_credentials}'
         MANIFEST
         TIMEFORMAT 'auto'
         GZIP
