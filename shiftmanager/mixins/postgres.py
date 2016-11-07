@@ -180,10 +180,21 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                        "must be specified.")
 
         tmpdir = tempfile.mkdtemp(dir=temp_file_dir)
+
+        # Here, we build a COPY statement that sends output into a Unix
+        # pipeline. We use SQL dollar-quoting ($$) to avoid escaping quotes.
+        # It goes through `split` and `gzip` to output compressed files.
+        # The `sed` invocation at the end makes up for a quirk in Postgres
+        # JSON output where backslashes are improperly doubled; we take the
+        # approach of collapsing all backslashes appearing in front of a "
+        # character down to one, so \\\\\\\" becomes \".
         copy_statement = (
             "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
-            "TO PROGRAM 'split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
-            "--filter=''gzip > $FILE.gz\'''"
+            "TO PROGRAM $$"
+            "split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
+            "--filter='gzip > $FILE.gz'"
+            """ | sed 's/\\*"/\"/g'"""
+            "$$"
         ).format(pg_table_or_select=pg_table_or_select,
                  tmpdir=tmpdir, line_bytes=line_bytes)
 
