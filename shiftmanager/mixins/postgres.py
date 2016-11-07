@@ -292,9 +292,13 @@ class S3UploaderThread(Thread):
         """
         print("Started a thread for uploading files to S3.")
         while (True):
-            files = os.listdir(self.dirpath)
+            files = sorted(os.listdir(self.dirpath))
             if not self.files_still_being_created and not files:
                 break
+            if files and self.files_still_being_created:
+                # The last listed file is the one being written to,
+                # so let's skip it for now.
+                files = files[:-1]
             for basename in files:
                 filepath = os.path.join(self.dirpath, basename)
                 complete_key_path = "".join([self.key_prefix, basename])
