@@ -185,16 +185,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         # pipeline. We use SQL dollar-quoting ($$) to avoid escaping quotes.
         # It goes through `split` and `gzip` to output compressed files.
         # The `sed` invocation at the end makes up for a quirk in Postgres
-        # JSON output where backslashes are improperly doubled; we take the
-        # approach of collapsing all backslashes appearing in front of a "
-        # character down to one, so \\\\\\\" becomes \".
+        # JSON output where backslashes are improperly doubled; for every pair
+        # of backslashes we substitute a single backslash. Due to multiple
+        # levels of quoting, a single backslash actually appears as 4
+        # backslashes in the sed invocation.
         copy_statement = (
-            "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
-            "TO PROGRAM $$"
-            "split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
-            "--filter='gzip > $FILE.json.gz'"
-            """ | sed 's/\\*"/\"/g'"""
-            "$$"
+            r"COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
+            r"TO PROGRAM $$"
+            r"split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
+            r"""--filter='sed "s/\\\\\\\\/\\\\/g" | gzip > $FILE.json.gz'"""
+            r"$$"
         ).format(pg_table_or_select=pg_table_or_select,
                  tmpdir=tmpdir, line_bytes=line_bytes)
 
