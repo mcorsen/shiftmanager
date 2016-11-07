@@ -7,16 +7,20 @@ Mixin classes for working with Postgres database exports
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-import codecs
-from datetime import datetime
+import datetime
+import decimal
 import json
 import tempfile
+import os
+import shutil
+from threading import Thread
+import time
 
 import psycopg2
+import psycopg2.extras
 
 from shiftmanager.memoized_property import memoized_property
 from shiftmanager.mixins.s3 import S3Mixin
-from shiftmanager import util
 
 
 class PostgresMixin(S3Mixin):
@@ -54,20 +58,14 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         self.pg_args = kwargs
         return self.pg_connection
 
-    def pg_copy_table_to_file(self, output_file_path, pg_table_name=None,
-                              pg_select_statement=None):
+    def pg_copy_statement(self,
+                          pg_table_name=None,
+                          pg_select_statement=None):
         """
-        Use Postgres to COPY the given table_name to a csv or json file
-        at the given output_path.
-
-        Additionally, fetch the row count of the given table_name for
-        further processing.
+        Create a Postgres COPY statement.
 
         Parameters
         ----------
-        output_file_path: str
-            File path for the output from Postgres;
-            output format will be determined by extension ('.csv' or '.json')
         pg_table_name: str
             Optional Postgres table name to be written to if user
             does not want to specify subset
@@ -77,92 +75,19 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         Returns
         -------
-        row_count: int
+        A SQL string giving the COPY statement
         """
-        if output_file_path.endswith('json'):
-            copy = ' '.join([
-                "COPY (SELECT row_to_json(x) FROM {pg_table_or_select} AS x)",
-                "TO '{tmp_fp}';"])
-        else:
-            copy = ' '.join([
-                "COPY {pg_table_or_select}",
-                "TO '{tmp_fp}'",
-                "DELIMITER ','",
-                "FORCE QUOTE *",
-                "CSV;"])
-
         if pg_select_statement is None and pg_table_name is not None:
-
-            formatted_statement = copy.format(
-                pg_table_or_select=pg_table_name,
-                tmp_fp=output_file_path)
-
+            pg_table_or_select = pg_table_name
         elif pg_select_statement is not None and pg_table_name is None:
-
-            if not (pg_select_statement.startswith("(") and
-                    pg_select_statement.endswith(")")):
-                pg_select_statement = "(" + pg_select_statement + ")"
-
-            formatted_statement = copy.format(
-                pg_table_or_select=pg_select_statement,
-                tmp_fp=output_file_path)
-
+            pg_table_or_select = '(' + pg_select_statement + ')'
         else:
-            ValueError("Please enter a table name or a select statement.")
-
-        with self.pg_connection as conn:
-            with conn.cursor() as cur:
-                cur.execute(formatted_statement)
-                row_count = cur.rowcount
-
-        return row_count
-
-    def get_file_chunk_generator(self, file_path, row_count, chunks):
-        """
-        Given the file_path and a row_count, yield *chunks* number
-        of string chunks
-
-        Parameters
-        ----------
-        file_path: str
-            File path for the output written by Postgres
-        row_count: int
-            Number of rows in the output file
-        chunks: int
-            Number of chunks to yield
-
-        Yields
-        ------
-        str
-        """
-        # Yield only a single chunk if the number of rows is small.
-        if row_count <= chunks:
-            with codecs.open(file_path, mode="r", encoding='utf-8') as f:
-                yield f.read()
-            raise StopIteration
-
-        # Get chunk boundaries
-        left_closed_boundary = util.linspace(0, row_count, chunks)
-        left_closed_boundary.append(row_count - 1)
-        right_closed_boundary = left_closed_boundary[1:]
-        final_boundary_index = len(right_closed_boundary) - 1
-
-        # We're going to allocate a large buffer for this -- let's read as fast
-        # as possible
-        chunk_lines = []
-        boundary_index = 0
-        boundary = right_closed_boundary[boundary_index]
-        one_mebibyte = 1048576
-        with codecs.open(file_path, mode="r", encoding='utf-8',
-                         buffering=one_mebibyte) as f:
-            for line_number, row in enumerate(f):
-                chunk_lines.append(row)
-                if line_number == boundary:
-                    if boundary_index != final_boundary_index:
-                        boundary_index += 1
-                        boundary = right_closed_boundary[boundary_index]
-                    yield u"".join(chunk_lines)
-                    chunk_lines = []
+            ValueError("Exactly one of pg_table_name or pg_select_statement "
+                       "must be specified.")
+        copy = ' '.join([
+            "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x)",
+            "TO PROGRAM;"]).format(pg_table_or_select=pg_table_or_select)
+        return copy
 
     @property
     def aws_credentials(self):
@@ -182,42 +107,55 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             return template.format(key_id=key_id,
                                    secret_key_id=secret_key_id)
 
-    def _create_copy_statement(self, table_name, manifest_key_path,
-                               fmt='csv'):
+    def _create_copy_statement(self, table_name, manifest_key_path):
         """Create Redshift copy statement for given table_name and
         the provided manifest_key_path.
-
         Parameters
         ----------
         table_name: str
             Redshift table name to COPY to
         manifest_key_path: str
             Complete S3 path to .manifest file
-        fmt: str
-            Value for the Redshift FORMAT parameter;
-            recommended values are "csv" (default) or "json 'auto'"
-
         Returns
         -------
         str
         """
-        return """copy {table_name}
-                  from '{manifest_key_path}'
-                  credentials '{aws_credentials}'
-                  manifest
-                  {fmt};""".format(table_name=table_name, fmt=fmt,
-                                   manifest_key_path=manifest_key_path,
-                                   aws_credentials=self.aws_credentials)
+        return """\
+        copy {table_name}
+        from '{manifest_key_path}'
+        credentials '{aws_credentials}'
+        MANIFEST
+        TIMEFORMAT 'auto'
+        GZIP
+        JSON 'auto'
+        """.format(table_name=table_name,
+                   manifest_key_path=manifest_key_path,
+                   aws_credentials=self.aws_credentials)
 
-    def copy_table_to_redshift(self, redshift_table_name,
-                               bucket_name, key_prefix, slices,
-                               pg_table_name=None, pg_select_statement=None,
-                               temp_file_dir=None, cleanup_s3=True,
-                               delete_statement=None):
+    def copy_table_to_redshift(self,
+                               redshift_table_name,
+                               bucket_name,
+                               key_prefix,
+                               pg_table_name=None,
+                               pg_select_statement=None,
+                               temp_file_dir=None,
+                               cleanup_s3=True,
+                               delete_statement=None,
+                               manifest_max_keys=None,
+                               line_bytes=104857600):
         """
-        Write the contents of a Postgres table to Redshift.
-        Write the table to the given bucket under the given
-        key prefix.
+        Writes the contents of a Postgres table to Redshift.
+
+        The approach here attempts to maximize speed and minimize local
+        disk usage. The fastest method of extracting data from Postgres
+        is the COPY command, which we use here, but pipe the output to
+        the ``split`` and ``gzip`` shell utilities to create a series of
+        compressed files. As files are created, a separate thread uploads
+        them to S3 and removes them from local disk.
+
+        Due to the use of external shell utilities, this function can
+        only run on an operating system with GNU core-utils installed
+        (available by default on Linux, and via homebrew on MacOS).
 
         Parameters
         ----------
@@ -227,9 +165,6 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             The name of the S3 bucket to be written to
         key_prefix: str
             The key path within the bucket to write to
-        slices: int
-            The number of slices in user's Redshift cluster, used to
-            split json files into chunks for parallel data loading
         pg_table_name: str
             Optional Postgres table name to be written to json if user
             does not want to specify subset
@@ -239,73 +174,178 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             Optional Specify location of temporary files
         cleanup_s3: bool
             Optional Clean up S3 location on failure. Defaults to True.
+        delete_statement: str or None
+            When not None, this statement will be run in the same transaction
+            as the (final) COPY statement.
+            This is useful when you want to clean up a previous backfill
+            at the same time as issuing a new backfill.
+        manifest_max_keys: int or None
+            If None, all S3 keys will be sent to Redshift in a single COPY
+            transaction. Otherwise, this parameter sets an upper limit on the
+            number of S3 keys included in the COPY manifest. If more keys were
+            produced, then additional COPY statements will be issued.
+            This is useful for particularly large loads that may timeout in
+            a single transaction.
+        line_bytes: int
+            The maximum number of bytes to write to a single file
+            (before compression); defaults to 100 MB
         """
         if not self.table_exists(redshift_table_name):
             raise ValueError("This table_name does not exist in Redshift!")
 
         bucket = self.get_bucket(bucket_name)
-        # All keys written to S3 in the event cleanup is needed
-        all_s3_keys = []
 
+        backfill_timestamp = datetime.datetime.utcnow().strftime(
+            "%Y-%m-%d_%H%M%S")
+
+        final_key_prefix = key_prefix
         if not key_prefix.endswith("/"):
-            final_key_prefix = "".join([key_prefix, "/"])
+            final_key_prefix += "/"
+
+        if pg_select_statement is None and pg_table_name is not None:
+            pg_table_or_select = pg_table_name
+        elif pg_select_statement is not None and pg_table_name is None:
+            pg_table_or_select = '(' + pg_select_statement + ')'
         else:
-            final_key_prefix = key_prefix
+            ValueError("Exactly one of pg_table_name or pg_select_statement "
+                       "must be specified.")
 
-        with tempfile.NamedTemporaryFile(dir=temp_file_dir, suffix='.json') as ntf:
-            jsontemp_path = ntf.name
-            row_count = self.pg_copy_table_to_file(
-                jsontemp_path, pg_table_name=pg_table_name,
-                pg_select_statement=pg_select_statement)
-            chunk_generator = self.get_file_chunk_generator(jsontemp_path,
-                                                           row_count, slices)
-            backfill_timestamp = datetime.utcnow().strftime(
-                "%Y-%m-%d_%H-%M-%S")
+        tmpdir = tempfile.mkdtemp(dir=temp_file_dir)
+        copy_statement = (
+            "COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
+            "TO PROGRAM 'split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
+            "--filter=''gzip > $FILE.gz\'''"
+        ).format(pg_table_or_select=pg_table_or_select,
+                 tmpdir=tmpdir, line_bytes=line_bytes)
 
-            manifest_entries = []
-            for count, chunk in enumerate(chunk_generator):
-                chunk_name = "_".join([backfill_timestamp, "chunk",
-                                       str(count)])
-                complete_key_path = "".join([final_key_prefix,
-                                             chunk_name, '.json'])
+        # Kick off a thread to upload files as they're produced
+        s3_thread = S3UploaderThread(tmpdir, bucket, final_key_prefix)
 
-                print('Writing {} to S3...'.format(complete_key_path))
-                self.write_string_to_s3(chunk, bucket, complete_key_path)
-                all_s3_keys.append(complete_key_path)
+        try:
+            s3_thread.start()
+            self.pg_execute_and_commit_single_statement(copy_statement)
+            print("Finished extracting data from Postgres. "
+                  "Waiting on uploads...")
+            s3_thread.files_still_being_created = False
+            s3_thread.join()  # Blocks until the S3 thread finishes its work
+            s3_keys = s3_thread.s3_keys
+        except:
+            if cleanup_s3:
+                print("Error while pulling data out of PostgreSQL. "
+                      "Cleaning up S3...")
+                for key in s3_thread.s3_keys:
+                    bucket.delete_key(key)
+                raise
 
-                s3_path = (complete_key_path
-                           if complete_key_path.startswith("/")
-                           else "".join(["/", complete_key_path]))
-                manifest_entries.append({
-                    'url': "".join(['s3://', bucket.name, s3_path]),
-                    'mandatory': True
-                })
+        print("Uploads all done. Cleaning up temp directory " + tmpdir)
+        shutil.rmtree(tmpdir)
 
-            manifest = {'entries': manifest_entries}
-            manifest_key_path = "".join([final_key_prefix,
-                                         backfill_timestamp, ".manifest"])
-            manifest_key = bucket.new_key(manifest_key_path)
-            all_s3_keys.append(manifest_key_path)
+        manifest_entries = [{
+            'url': 's3://' + bucket.name + s3_path,
+            'mandatory': True
+        } for s3_path in s3_keys]
+
+        start_idx = 0
+        num_entries = len(manifest_entries)
+        manifest_max_keys = manifest_max_keys or num_entries
+        while (start_idx < num_entries):
+            end_idx = min(num_entries, start_idx + manifest_max_keys)
+            print("Using manifest_entries: start=%d, end=%d" %
+                  (start_idx, end_idx))
+            entries = manifest_entries[start_idx:end_idx]
+            manifest = {'entries': entries}
+            manifest_key_path = "".join([final_key_prefix, backfill_timestamp,
+                                         str(start_idx), "-", str(end_idx),
+                                         ".manifest"])
+            s3_keys.append(manifest_key_path)
 
             print('Writing .manifest file to S3...')
-            manifest_key.set_contents_from_string(json.dumps(manifest),
-                                                  encrypt_key=True)
+            self.write_string_to_s3(json.dumps(manifest), bucket,
+                                    manifest_key_path)
             complete_manifest_path = "".join(['s3://', bucket.name,
                                               manifest_key_path])
             statements = ""
-            if delete_statement:
+
+            # Include the delete statement only on the last transaction.
+            if delete_statement and end_idx == num_entries:
                 statements += delete_statement + ';\n'
 
             statements += self._create_copy_statement(
-                redshift_table_name, complete_manifest_path, fmt="json 'auto'")
+                redshift_table_name, complete_manifest_path)
 
             print('Copying from S3 to Redshift...')
             try:
                 self.execute(statements)
+                start_idx = end_idx
             except:
                 # Clean up S3 bucket in the event of any exception
                 if cleanup_s3:
                     print("Error writing to Redshift! Cleaning up S3...")
-                    for key in all_s3_keys:
+                    for key in s3_keys:
                         bucket.delete_key(key)
                 raise
+
+
+class S3UploaderThread(Thread):
+    """
+    A thread that polls for files created in *dirpath*,
+    uploads them to S3, and deletes them.
+
+    When the thread finishes, a list of the keys uploaded is
+    available through the *s3_keys* field.
+    """
+    def __init__(self, dirpath, bucket, key_prefix):
+        """
+        Create a thread.
+
+        Parameters
+        ----------
+        dirpath: str
+            Path to the directory to search for files to upload
+        bucket: S3.Bucket
+            Bucket for uploading files
+        key_prefix:
+            Prefix for keys uploaded to S3
+        """
+        Thread.__init__(self)
+        self.daemon = True  # If main program aborts, thread will terminate
+        self.dirpath = dirpath
+        self.key_prefix = key_prefix
+        self.bucket = bucket
+        self.files_still_being_created = True
+        self.s3_keys = []
+
+    def run(self):
+        """
+        Continuously polls for new files until
+        *files_still_being_created* is set to False by the main thread.
+        At that point, it will upload any remaining files and exit.
+        """
+        print("Started a thread for uploading files to S3.")
+        while (True):
+            files = os.listdir(self.dirpath)
+            if not self.files_still_being_created and not files:
+                break
+            for basename in files:
+                filepath = os.path.join(self.dirpath, basename)
+                complete_key_path = "".join([self.key_prefix, basename])
+                print("Writing to S3: " + complete_key_path)
+                boto_key = self.bucket.new_key(complete_key_path)
+                boto_key.set_contents_from_filename(filepath, encrypt_key=True)
+                self.s3_keys.append(complete_key_path)
+                os.remove(filepath)
+            time.sleep(1)
+
+
+def serializer(obj):
+    """
+    JSON serializer with support for several non-core datatypes.
+    """
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return obj.decode('utf-8')
+    if isinstance(obj, decimal.Decimal):
+        return float(obj)
+    raise TypeError("Unserializable object {} of type {}"
+                    .format(obj, type(obj)))
