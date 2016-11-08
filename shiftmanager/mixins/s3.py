@@ -148,6 +148,40 @@ class S3Mixin(object):
         boto_key = bucket.new_key(s3_key_path)
         boto_key.set_contents_from_string(chunk, encrypt_key=True)
 
+    def write_file_to_s3(self, f, bucket, s3_key_path):
+        """
+        Given a string chunk that represents a piece of a CSV file, write
+        the chunk to an S3 key.
+
+        Parameters
+        ----------
+        chunk: str
+            String blob representing a chunk of a larger CSV
+        bucket: boto.s3.bucket.Bucket
+            The bucket to be written to
+        s3_key_path: str
+            The key path to write the chunk to
+        """
+        boto_key = bucket.new_key(s3_key_path)
+        boto_key.set_contents_from_file(f, encrypt_key=True)
+
+    def write_filename_to_s3(self, filename, bucket, s3_key_path):
+        """
+        Given a string chunk that represents a piece of a CSV file, write
+        the chunk to an S3 key.
+
+        Parameters
+        ----------
+        chunk: str
+            String blob representing a chunk of a larger CSV
+        bucket: boto.s3.bucket.Bucket
+            The bucket to be written to
+        s3_key_path: str
+            The key path to write the chunk to
+        """
+        boto_key = bucket.new_key(s3_key_path)
+        boto_key.set_contents_from_filename(filename, encrypt_key=True)
+
     @check_s3_connection
     def get_bucket(self, bucket_name):
         """
