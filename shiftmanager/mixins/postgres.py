@@ -13,6 +13,7 @@ import json
 import tempfile
 import os
 import shutil
+import threading
 from threading import Thread
 import time
 
@@ -206,10 +207,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             self.pg_execute_and_commit_single_statement(copy_statement)
             print("Finished extracting data from Postgres. "
                   "Waiting on uploads...")
-            s3_thread.files_still_being_created = False
-            s3_thread.join()  # Blocks until the S3 thread finishes its work
+            s3_thread.finish_uploads_and_exit()
+            while s3_thread.is_alive():
+                # We call join() in a loop with a 1 second timeout so that
+                # a user hitting Ctrl-C will allow a KeyboardInterrupt
+                # to be issued and we can exit. If we simply call join(),
+                # it blocks and no exceptions can reach the main program.
+                s3_thread.join(1)
             s3_keys = s3_thread.s3_keys
         except:
+            s3_thread.abort()
             if cleanup_s3:
                 print("Error while pulling data out of PostgreSQL. "
                       "Cleaning up S3...")
@@ -292,8 +299,15 @@ class S3UploaderThread(Thread):
         self.dirpath = dirpath
         self.key_prefix = key_prefix
         self.bucket = bucket
-        self.files_still_being_created = True
         self.s3_keys = []
+        self._abort = threading.Event()
+        self._file_creation_complete = threading.Event()
+
+    def finish_uploads_and_exit(self):
+        self._file_creation_complete.set()
+
+    def abort(self):
+        self._abort.set()
 
     def run(self):
         """
@@ -304,13 +318,15 @@ class S3UploaderThread(Thread):
         print("Started a thread for uploading files to S3.")
         while (True):
             files = sorted(os.listdir(self.dirpath))
-            if not self.files_still_being_created and not files:
-                break
-            if files and self.files_still_being_created:
+            if self._file_creation_complete.is_set() and not files:
+                return
+            if files and not self._file_creation_complete.is_set():
                 # The last listed file is the one being written to,
                 # so let's skip it for now.
                 files = files[:-1]
             for basename in files:
+                if self._abort.is_set():
+                    return
                 filepath = os.path.join(self.dirpath, basename)
                 complete_key_path = "".join([self.key_prefix, basename])
                 print("Writing to S3: " + complete_key_path)
