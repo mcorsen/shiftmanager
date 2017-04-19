@@ -112,7 +112,8 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                                cleanup_s3=True,
                                delete_statement=None,
                                manifest_max_keys=None,
-                               line_bytes=104857600):
+                               line_bytes=104857600,
+                               canned_acl=None):
         """
         Writes the contents of a Postgres table to Redshift.
 
@@ -159,6 +160,8 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         line_bytes: int
             The maximum number of bytes to write to a single file
             (before compression); defaults to 100 MB
+        canned_acl: str
+            A canned ACL to apply to objects uploaded to S3
         """
         if not self.table_exists(redshift_table_name):
             raise ValueError("This table_name does not exist in Redshift!")
@@ -200,7 +203,8 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                  tmpdir=tmpdir, line_bytes=line_bytes)
 
         # Kick off a thread to upload files as they're produced
-        s3_thread = S3UploaderThread(tmpdir, bucket, final_key_prefix)
+        s3_thread = S3UploaderThread(tmpdir, bucket, final_key_prefix,
+                                     canned_acl)
 
         try:
             s3_thread.start()
@@ -281,7 +285,7 @@ class S3UploaderThread(Thread):
     When the thread finishes, a list of the keys uploaded is
     available through the *s3_keys* field.
     """
-    def __init__(self, dirpath, bucket, key_prefix):
+    def __init__(self, dirpath, bucket, key_prefix, canned_acl):
         """
         Create a thread.
 
@@ -291,13 +295,16 @@ class S3UploaderThread(Thread):
             Path to the directory to search for files to upload
         bucket: S3.Bucket
             Bucket for uploading files
-        key_prefix:
+        key_prefix: str
             Prefix for keys uploaded to S3
+        canned_acl: str
+            A canned ACL to set on keys uploaded to S3
         """
         Thread.__init__(self)
         self.daemon = True  # If main program aborts, thread will terminate
         self.dirpath = dirpath
         self.key_prefix = key_prefix
+        self.canned_acl = canned_acl
         self.bucket = bucket
         self.s3_keys = []
         self._abort = threading.Event()
@@ -332,6 +339,8 @@ class S3UploaderThread(Thread):
                 print("Writing to S3: " + complete_key_path)
                 boto_key = self.bucket.new_key(complete_key_path)
                 boto_key.set_contents_from_filename(filepath, encrypt_key=True)
+                if self.canned_acl is not None:
+                    boto_key.set_canned_acl(self.canned_acl)
                 self.s3_keys.append(complete_key_path)
                 os.remove(filepath)
             time.sleep(1)
