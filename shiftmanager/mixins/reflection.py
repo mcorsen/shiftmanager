@@ -100,6 +100,11 @@ class ReflectionMixin(object):
         analyze_compression = kwargs.pop('analyze_compression', None)
         kw['autoload'] = True
         kw['extend_existing'] = kw.get('extend_existing', True)
+        # Run once with autoload enabled to reflect existing structure.
+        table = sqlalchemy.Table(name, self.meta, *args, **kw)
+        kw['autoload'] = False
+        # And run again without autoload to make sure overrides (like distkey)
+        # are applied.
         table = sqlalchemy.Table(name, self.meta, *args, **kw)
         if analyze_compression:
             for col in table.columns:
