@@ -47,7 +47,7 @@ class ReflectionMixin(object):
 
     @memoized_property
     def engine(self):
-        """A `sqlalchemy.engine` which wraps `connection`.
+        """A sqlalchemy.engine which wraps `connection`.
         """
         return sqlalchemy.create_engine("redshift+psycopg2://",
                                         poolclass=sqlalchemy.pool.StaticPool,
@@ -55,7 +55,8 @@ class ReflectionMixin(object):
 
     @memoized_property
     def meta(self):
-        """A `sqlalchemy.schema.MetaData` instance used for reflection calls.
+        """A :class:`~sqlalchemy.schema.MetaData` instance used for
+        reflection calls.
         """
         meta = sqlalchemy.MetaData()
         meta.bind = self.engine
@@ -73,11 +74,12 @@ class ReflectionMixin(object):
                                                    **kwargs)
 
     def reflected_table(self, name, *args, **kwargs):
-        """Return a `sqlalchemy.schema.Table` reflected from the database.
+        """
+        Return a :class:`~sqlalchemy.schema.Table` reflected from the database.
 
         This is simply a convenience method which passes arguments to the
-        `sqlalchemy.schema.Table` constructor, so you may override various
-        properties of the existing table.
+        :class:`~sqlalchemy.schema.Table` constructor,
+        so you may override various properties of the existing table.
         In particular, Redshift-specific attributes like
         distkey and sorkey can be set through ``redshift_*`` keyword arguments
         (``redshift_distkey='col1'``,
@@ -100,6 +102,12 @@ class ReflectionMixin(object):
         analyze_compression = kwargs.pop('analyze_compression', None)
         kw['autoload'] = True
         kw['extend_existing'] = kw.get('extend_existing', True)
+        # Run once with autoload enabled to reflect existing structure
+        # into self.meta
+        sqlalchemy.Table(name, self.meta, *args, **kw)
+        kw['autoload'] = False
+        # And run again without autoload to make sure overrides (like distkey)
+        # are applied.
         table = sqlalchemy.Table(name, self.meta, *args, **kw)
         if analyze_compression:
             for col in table.columns:
@@ -112,7 +120,7 @@ class ReflectionMixin(object):
 
         Parameters
 
-        relation : `str` or `sqlalchemy.schema.Table`
+        relation : `str` or :class:`~sqlalchemy.schema.Table`
             The table or view to reflect
         schema : `str`
             The database schema in which to look for *relation*
@@ -131,7 +139,7 @@ class ReflectionMixin(object):
 
         Parameters
         ----------
-        table : `str` or `sqlalchemy.schema.Table`
+        table : `str` or :class:`~sqlalchemy.schema.Table`
             The table to reflect
         schema : `str`
             The database schema in which to look for *table*
@@ -166,7 +174,7 @@ class ReflectionMixin(object):
 
         Parameters
         ----------
-        view : `str` or `sqlalchemy.schema.Table`
+        view : `str` or :class:`~sqlalchemy.schema.Table`
             The view to reflect
         schema : `str`
             The database schema in which to look for *view*
@@ -214,7 +222,7 @@ class ReflectionMixin(object):
 
         Parameters
         ----------
-        table : `str` or `sqlalchemy.schema.Table`
+        table : `str` or :class:`~sqlalchemy.schema.Table`
             The table to reflect
         schema : `str`
             The database schema in which to look for *table*
