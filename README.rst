@@ -150,7 +150,7 @@ how that initial row is chosen.
 `deep_copy` can also be used to migrate an existing table to a new structure,
 providing a convenient way to alter distkeys, sortkeys, and column encodings.
 Additional keyword arguments will be passed to the `reflected_table` method,
-altering the reflected `sqlalchemy.schema.Table`::
+altering the reflected :class:`~sqlalchemy.schema.Table`::
 
   >>> kwargs = dict(redshift_distkey='email_address', redshift_sortkey=('email_address', 'id'))
   >>> batch = redshift.deep_copy('my_table', schema='my_schema', **kwarg)
