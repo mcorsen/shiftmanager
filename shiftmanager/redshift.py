@@ -42,6 +42,8 @@ class Redshift(AdminMixin, ReflectionMixin, PostgresMixin, S3Mixin):
         envvar equivalent: AWS_SECRET_ACCESS_KEY
     security_token : str
         envvar equivalent: AWS_SECURITY_TOKEN or AWS_SESSION_TOKEN
+    kwargs : dict
+        Additional keyword arguments sent to psycopg2.connect
     """
 
     @memoized_property
@@ -55,13 +57,15 @@ class Redshift(AdminMixin, ReflectionMixin, PostgresMixin, S3Mixin):
                                 host=self.host,
                                 port=self.port,
                                 database=self.database,
-                                password=self.password)
+                                password=self.password,
+                                **self.pgkwargs)
 
     def __init__(self, database=None, user=None, password=None, host=None,
                  port=5439,
                  aws_access_key_id=None,
                  aws_secret_access_key=None,
-                 security_token=None):
+                 security_token=None,
+                 **kwargs):
 
         self.set_aws_credentials(aws_access_key_id, aws_secret_access_key,
                                  security_token)
@@ -71,6 +75,7 @@ class Redshift(AdminMixin, ReflectionMixin, PostgresMixin, S3Mixin):
         self.port = port or os.environ.get('PGPORT')
         self.database = database or os.environ.get('PGDATABASE')
         self.password = password or os.environ.get('PGPASSWORD')
+        self.pgkwargs = kwargs
 
         self._all_privileges = None
 
