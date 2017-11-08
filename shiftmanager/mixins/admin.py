@@ -13,21 +13,20 @@ def random_password(length=64):
       and one number.
     * Can use any printable ASCII characters (ASCII code 33 to 126)
       except ``'`` (single quote), ``\"`` (double quote), ``\\``, ``/``,
-      ``@``, or space.
+      ``@``, ``\``` or space.
     * See `Redshift's CREATE USER docs
       <http://docs.aws.amazon.com/redshift/latest/dg/r_CREATE_USER.html>`_
     """
     rand = random.SystemRandom()
-    invalid_chars = r'''\/'"@ '''
-    valid_chars_set = set(
-        string.digits +
-        string.ascii_letters +
-        string.punctuation
-    ) - set(invalid_chars)
+    invalid_chars = r'''`\/'"@ '''
+    valid_chars_set = set(string.digits + string.ascii_letters +
+                          string.punctuation) - set(invalid_chars)
     valid_chars = list(valid_chars_set)
-    chars = [rand.choice(string.ascii_uppercase),
-             rand.choice(string.ascii_lowercase),
-             rand.choice(string.digits)]
+    chars = [
+        rand.choice(string.ascii_uppercase),
+        rand.choice(string.ascii_lowercase),
+        rand.choice(string.digits)
+    ]
     chars += [rand.choice(valid_chars) for x in range(length - 3)]
     rand.shuffle(chars)
     return ''.join(chars)
@@ -41,9 +40,12 @@ class AdminMixin(object):
     def random_password(length=64):
         return random_password(length)
 
-    def create_user(self, name,
-                    password, valid_until=None,
-                    createdb=False, createuser=False,
+    def create_user(self,
+                    name,
+                    password,
+                    valid_until=None,
+                    createdb=False,
+                    createuser=False,
                     groups=None,
                     execute=False,
                     **parameters):
@@ -87,9 +89,12 @@ class AdminMixin(object):
             statement += ';\n' + self.alter_user(name, **parameters)
         return self.mogrify(statement, data, execute)
 
-    def alter_user(self, name,
-                   password=None, valid_until=None,
-                   createdb=None, createuser=None,
+    def alter_user(self,
+                   name,
+                   password=None,
+                   valid_until=None,
+                   createdb=None,
+                   createuser=None,
                    rename=None,
                    execute=False,
                    **parameters):
