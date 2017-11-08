@@ -14,4 +14,4 @@ $(VENV):
 	virtualenv $@
 
 requirements.txt:
-	pip freeze > $@
+	$(VENV)/bin/pip freeze > $@
