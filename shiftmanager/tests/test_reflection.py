@@ -24,6 +24,15 @@ def complex_table():
                     sa.schema.Column("col3", sa.INTEGER))
 
 
+@pytest.fixture
+def identity_table():
+    return sa.Table("my_identity_table", sa.MetaData(),
+                    sa.schema.Column("col1", sa.INTEGER),
+                    sa.schema.Column("col2", sa.INTEGER),
+                    sa.schema.Column("id_col", sa.INTEGER,
+                                     info={'identity': [1, 1]}))
+
+
 def cleaned(statement):
     text = str(statement)
     stripped_lines = [line.strip() for line in text.split('\n')]
@@ -52,7 +61,10 @@ def test_deep_copy_distinct(shift, table):
     col1 INTEGER
     );
 
-    INSERT INTO my_table SELECT DISTINCT * FROM my_table$outgoing;
+    INSERT INTO my_table
+    SELECT DISTINCT
+        "col1"
+    FROM my_table$outgoing;
 
     DROP TABLE my_table$outgoing;
     """
@@ -69,7 +81,10 @@ def test_cascade(shift, table):
     col1 INTEGER
     );
 
-    INSERT INTO my_table SELECT * FROM my_table$outgoing;
+    INSERT INTO my_table
+    SELECT
+        "col1"
+    FROM my_table$outgoing;
 
     DROP TABLE my_table$outgoing CASCADE;
     """
@@ -91,16 +106,42 @@ def test_deduplicate(shift, complex_table):
     col3 INTEGER
     );
 
-    INSERT INTO my_complex_table SELECT
-    "col1",
-    "col2",
-    "col3"
+    INSERT INTO my_complex_table
+    SELECT
+        "col1",
+        "col2",
+        "col3"
     FROM (
-    SELECT *, ROW_NUMBER()
-    OVER (PARTITION BY col1, col2 ORDER BY col3 DESC)
-    FROM my_complex_table$outgoing
+        SELECT *, ROW_NUMBER()
+        OVER (PARTITION BY col1, col2 ORDER BY col3 DESC)
+        FROM my_complex_table$outgoing
     ) WHERE row_number = 1;
 
     DROP TABLE my_complex_table$outgoing;
+    """
+    assert(cleaned(statement) == cleaned(expected))
+
+
+def test_identity(shift, identity_table):
+    statement = shift.deep_copy(identity_table,
+                                copy_privileges=False, analyze=False)
+
+    expected = """
+    LOCK TABLE my_identity_table;
+    ALTER TABLE my_identity_table RENAME TO my_identity_table$outgoing;
+
+    CREATE TABLE my_identity_table (
+    col1 INTEGER,
+    col2 INTEGER,
+    id_col INTEGER IDENTITY(1,1)
+    );
+
+    INSERT INTO my_identity_table
+    SELECT
+        "col1",
+        "col2"
+    FROM my_identity_table$outgoing;
+
+    DROP TABLE my_identity_table$outgoing;
     """
     assert(cleaned(statement) == cleaned(expected))

@@ -1,13 +1,14 @@
 language: python
-python: 3.5
-env:
-  matrix:
-    - TOX_ENV=py27
-    - TOX_ENV=py34
-    - TOX_ENV=py35
-    - TOX_ENV=docs
-    - TOX_ENV=lint
+python:
+  - 2.7
+  - 3.4
+  - 3.5
+  - 3.6
+matrix:
+  include:
+    - { python: 3.5, env: TOXENV=docs }
+    - { python: 3.5, env: TOXENV=lint }
 install:
-  - pip install tox
+  - pip install tox-travis
 script:
-  - tox -e $TOX_ENV
+  - tox

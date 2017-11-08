@@ -266,12 +266,14 @@ class ReflectionMixin(object):
         outgoing_name_simple = table.name + '$outgoing'
         table_definition = '\n' + self.table_definition(
             table, None, copy_privileges, use_cache, analyze_compression)
-        insert_statement = "\nINSERT INTO {table_name} SELECT "
+        insert_statement = "\nINSERT INTO {table_name} \nSELECT "
+        identity_col = self._get_identity(table.name)
+        col_str = ',\n\t'.join('"%s"' % col.name
+                               for col in table.columns
+                               if col.name != identity_col)
         if distinct:
             insert_statement += "DISTINCT "
         if deduplicate_partition_by:
-            col_str = ',\n\t'.join('"%s"' % colname for colname in
-                                   table.columns.keys())
             inner = "\tSELECT *, ROW_NUMBER() \n"
             inner += "\tOVER (PARTITION BY {deduplicate_partition_by}"
             if deduplicate_order_by:
@@ -280,7 +282,7 @@ class ReflectionMixin(object):
             insert_statement += ("\n\t" + col_str + "\nFROM (\n" +
                                  inner + ") WHERE row_number = 1")
         else:
-            insert_statement += "* FROM {outgoing_name}"
+            insert_statement += "\n\t" + col_str + "\nFROM {outgoing_name}"
         drop_statement = "\nDROP TABLE {outgoing_name}"
         if cascade:
             drop_statement += " CASCADE"
@@ -328,3 +330,16 @@ class ReflectionMixin(object):
         except AttributeError:
             table = self.reflected_table(table, schema=schema, **kwargs)
         return table
+
+    def _get_identity(self, table_name):
+        query = sqlalchemy.sql.text("""
+            SELECT a.attname AS identity_col
+            FROM pg_class c, pg_attribute a, pg_attrdef d
+            WHERE c.oid = a.attrelid
+                AND c.relkind = 'r'
+                AND a.attrelid = d.adrelid
+                AND a.attnum = d.adnum
+                AND d.adsrc LIKE '%%identity%%'
+                AND c.relname = :tbl;
+        """)
+        return self.engine.execute(query, {'tbl': table_name}).scalar()
