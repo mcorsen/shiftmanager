@@ -44,7 +44,7 @@ setup(
     install_requires=[
         "boto>=2.38.0",
         "psycopg2>=2.5.4",
-        "sqlalchemy-redshift>=0.3.0",
+        "sqlalchemy-redshift>=0.7.0",
         "sqlalchemy-views>=0.2",
     ]
 )
