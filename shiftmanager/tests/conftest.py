@@ -106,9 +106,9 @@ def mogrify(self, batch, parameters=None, execute=False):
     return batch
 
 
-def id_col(self, table_name):
+def id_cols(self, table_name):
     if table_name == 'my_identity_table':
-        return 'id_col'
+        return {'id_col'}
 
 
 @pytest.fixture
@@ -121,7 +121,7 @@ def shift(monkeypatch, mock_connection, mock_s3):
                         lambda *args, **kwargs: mock_s3)
     monkeypatch.setattr('shiftmanager.Redshift.mogrify', mogrify)
     monkeypatch.setattr('shiftmanager.Redshift.execute', MagicMock())
-    monkeypatch.setattr('shiftmanager.Redshift._get_identity', id_col)
+    monkeypatch.setattr('shiftmanager.Redshift._get_identity_columns', id_cols)
     shift = rs.Redshift("", "", "", "",
                         aws_access_key_id="access_key",
                         aws_secret_access_key="secret_key",
