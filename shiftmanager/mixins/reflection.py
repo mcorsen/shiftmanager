@@ -267,10 +267,10 @@ class ReflectionMixin(object):
         table_definition = '\n' + self.table_definition(
             table, None, copy_privileges, use_cache, analyze_compression)
         insert_statement = "\nINSERT INTO {table_name} \nSELECT "
-        identity_col = self._get_identity(table.name)
+        identity_cols = self._get_identity_columns(table.name) or {}
         col_str = ',\n\t'.join('"%s"' % col.name
                                for col in table.columns
-                               if col.name != identity_col)
+                               if col.name not in identity_cols)
         if distinct:
             insert_statement += "DISTINCT "
         if deduplicate_partition_by:
@@ -331,7 +331,7 @@ class ReflectionMixin(object):
             table = self.reflected_table(table, schema=schema, **kwargs)
         return table
 
-    def _get_identity(self, table_name):
+    def _get_identity_columns(self, table_name):
         query = sqlalchemy.sql.text("""
             SELECT a.attname AS identity_col
             FROM pg_class c, pg_attribute a, pg_attrdef d
@@ -342,4 +342,5 @@ class ReflectionMixin(object):
                 AND d.adsrc LIKE '%%identity%%'
                 AND c.relname = :tbl;
         """)
-        return self.engine.execute(query, {'tbl': table_name}).scalar()
+        results = self.engine.execute(query, {'tbl': table_name})
+        return {id_col[0] for id_col in results}
