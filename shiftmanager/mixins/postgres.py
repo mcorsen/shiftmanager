@@ -221,12 +221,14 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             s3_keys = s3_thread.s3_keys
         except:
             s3_thread.abort()
+            print("Error while pulling data out of PostgreSQL.")
             if cleanup_s3:
-                print("Error while pulling data out of PostgreSQL. "
-                      "Cleaning up S3...")
+                print("Cleaning up S3...")
                 for key in s3_thread.s3_keys:
                     bucket.delete_key(key)
-                raise
+            else:
+                print("Leaving files in place...")
+            raise
 
         print("Uploads all done. Cleaning up temp directory " + tmpdir)
         shutil.rmtree(tmpdir)
