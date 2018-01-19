@@ -200,16 +200,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                 # it blocks and no exceptions can reach the main program.
                 s3_thread.join(1)
             s3_keys = s3_thread.s3_keys
-        except:
+        except BaseException as e:
             s3_thread.abort()
-            print("Error while pulling data out of PostgreSQL.")
+            print("Error while pulling data out of PostgreSQL")
             if cleanup_s3:
                 print("Cleaning up S3...")
                 for key in s3_thread.s3_keys:
                     bucket.delete_key(key)
             else:
                 print("Leaving files in place...")
-            raise
+            raise Exception(e)
 
         print("Uploads all done. Cleaning up temp directory " + tmpdir)
         shutil.rmtree(tmpdir)
@@ -323,13 +323,13 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             try:
                 self.execute(statements)
                 start_idx = end_idx
-            except:
+            except BaseException as e:
                 # Clean up S3 bucket in the event of any exception
                 if cleanup_s3:
                     print("Error writing to Redshift! Cleaning up S3...")
                     for key in s3_keys:
                         bucket.delete_key(key)
-                raise
+                raise Exception(e)
 
 
 class S3UploaderThread(Thread):
