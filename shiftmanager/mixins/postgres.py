@@ -102,20 +102,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                    manifest_key_path=manifest_key_path,
                    aws_credentials=self.aws_credentials)
 
-    def copy_table_to_redshift(self,
-                               redshift_table_name,
-                               bucket_name,
-                               key_prefix,
-                               pg_table_name=None,
-                               pg_select_statement=None,
-                               temp_file_dir=None,
-                               cleanup_s3=True,
-                               delete_statement=None,
-                               manifest_max_keys=None,
-                               line_bytes=104857600,
-                               canned_acl=None):
+    def copy_table_to_s3(self,
+                         bucket_name,
+                         key_prefix,
+                         pg_table_name=None,
+                         pg_select_statement=None,
+                         temp_file_dir=None,
+                         line_bytes=104857600,
+                         canned_acl=None):
         """
-        Writes the contents of a Postgres table to Redshift.
+        Writes the contents of a Postgres table to S3.
 
         The approach here attempts to maximize speed and minimize local
         disk usage. The fastest method of extracting data from Postgres
@@ -130,8 +126,6 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         Parameters
         ----------
-        redshift_table_name: str
-            Redshift table to which json files are to be written
         bucket_name: str
             The name of the S3 bucket to be written to
         key_prefix: str
@@ -143,29 +137,16 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             Optional select statement if user wants to specify subset of table
         temp_file_dir: str
             Optional Specify location of temporary files
-        cleanup_s3: bool
-            Optional Clean up S3 location on failure. Defaults to True.
-        delete_statement: str or None
-            When not None, this statement will be run in the same transaction
-            as the (final) COPY statement.
-            This is useful when you want to clean up a previous backfill
-            at the same time as issuing a new backfill.
-        manifest_max_keys: int or None
-            If None, all S3 keys will be sent to Redshift in a single COPY
-            transaction. Otherwise, this parameter sets an upper limit on the
-            number of S3 keys included in the COPY manifest. If more keys were
-            produced, then additional COPY statements will be issued.
-            This is useful for particularly large loads that may timeout in
-            a single transaction.
         line_bytes: int
             The maximum number of bytes to write to a single file
             (before compression); defaults to 100 MB
         canned_acl: str
             A canned ACL to apply to objects uploaded to S3
-        """
-        if not self.table_exists(redshift_table_name):
-            raise ValueError("This table_name does not exist in Redshift!")
 
+        Returns
+        -------
+        List of S3 keys
+        """
         bucket = self.get_bucket(bucket_name)
 
         backfill_timestamp = datetime.datetime.utcnow().strftime(
@@ -232,6 +213,76 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         print("Uploads all done. Cleaning up temp directory " + tmpdir)
         shutil.rmtree(tmpdir)
+        return s3_keys
+
+    def copy_table_to_redshift(self,
+                               redshift_table_name,
+                               bucket_name,
+                               key_prefix,
+                               pg_table_name=None,
+                               pg_select_statement=None,
+                               temp_file_dir=None,
+                               cleanup_s3=True,
+                               delete_statement=None,
+                               manifest_max_keys=None,
+                               line_bytes=104857600,
+                               canned_acl=None):
+        """
+        Writes the contents of a Postgres table to Redshift.
+
+        The approach here attempts to maximize speed and minimize local
+        disk usage. The fastest method of extracting data from Postgres
+        is the COPY command, which we use here, but pipe the output to
+        the ``split`` and ``gzip`` shell utilities to create a series of
+        compressed files. As files are created, a separate thread uploads
+        them to S3 and removes them from local disk.
+
+        Due to the use of external shell utilities, this function can
+        only run on an operating system with GNU core-utils installed
+        (available by default on Linux, and via homebrew on MacOS).
+
+        Parameters
+        ----------
+        redshift_table_name: str
+            Redshift table to which json files are to be written
+        bucket_name: str
+            The name of the S3 bucket to be written to
+        key_prefix: str
+            The key path within the bucket to write to
+        pg_table_name: str
+            Optional Postgres table name to be written to json if user
+            does not want to specify subset
+        pg_select_statement: str
+            Optional select statement if user wants to specify subset of table
+        temp_file_dir: str
+            Optional Specify location of temporary files
+        cleanup_s3: bool
+            Optional Clean up S3 location on failure. Defaults to True.
+        delete_statement: str or None
+            When not None, this statement will be run in the same transaction
+            as the (final) COPY statement.
+            This is useful when you want to clean up a previous backfill
+            at the same time as issuing a new backfill.
+        manifest_max_keys: int or None
+            If None, all S3 keys will be sent to Redshift in a single COPY
+            transaction. Otherwise, this parameter sets an upper limit on the
+            number of S3 keys included in the COPY manifest. If more keys were
+            produced, then additional COPY statements will be issued.
+            This is useful for particularly large loads that may timeout in
+            a single transaction.
+        line_bytes: int
+            The maximum number of bytes to write to a single file
+            (before compression); defaults to 100 MB
+        canned_acl: str
+            A canned ACL to apply to objects uploaded to S3
+        """
+        if not self.table_exists(redshift_table_name):
+            raise ValueError("This table_name does not exist in Redshift!")
+
+        bucket = self.get_bucket(bucket_name)
+        s3_keys = copy_table_to_s3(
+            bucket_name, key_prefix, pg_table_name, pg_table_name,
+            temp_file_dir, line_bytes, canned_acl)
 
         manifest_entries = [{
             'url': 's3://' + bucket.name + s3_path,
