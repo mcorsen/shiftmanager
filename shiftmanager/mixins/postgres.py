@@ -108,6 +108,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                          pg_table_name=None,
                          pg_select_statement=None,
                          temp_file_dir=None,
+                         cleanup_s3=True,
                          line_bytes=104857600,
                          canned_acl=None):
         """
@@ -137,6 +138,8 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
             Optional select statement if user wants to specify subset of table
         temp_file_dir: str
             Optional Specify location of temporary files
+        cleanup_s3: bool
+            Optional Clean up S3 location on failure. Defaults to True.
         line_bytes: int
             The maximum number of bytes to write to a single file
             (before compression); defaults to 100 MB
@@ -145,12 +148,9 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         Returns
         -------
-        List of S3 keys
+        (Final key prefix, List of S3 keys)
         """
         bucket = self.get_bucket(bucket_name)
-
-        backfill_timestamp = datetime.datetime.utcnow().strftime(
-            "%Y-%m-%d_%H%M%S")
 
         final_key_prefix = key_prefix
         if not key_prefix.endswith("/"):
@@ -213,7 +213,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
         print("Uploads all done. Cleaning up temp directory " + tmpdir)
         shutil.rmtree(tmpdir)
-        return s3_keys
+        return final_key_prefix, s3_keys
 
     def copy_table_to_redshift(self,
                                redshift_table_name,
@@ -276,13 +276,15 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         canned_acl: str
             A canned ACL to apply to objects uploaded to S3
         """
+        backfill_timestamp = datetime.datetime.utcnow().strftime(
+            "%Y-%m-%d_%H%M%S")
         if not self.table_exists(redshift_table_name):
             raise ValueError("This table_name does not exist in Redshift!")
 
         bucket = self.get_bucket(bucket_name)
-        s3_keys = copy_table_to_s3(
-            bucket_name, key_prefix, pg_table_name, pg_table_name,
-            temp_file_dir, line_bytes, canned_acl)
+        final_key_prefix, s3_keys = self.copy_table_to_s3(
+            bucket_name, key_prefix, pg_table_name, pg_select_statement,
+            temp_file_dir, cleanup_s3, line_bytes, canned_acl)
 
         manifest_entries = [{
             'url': 's3://' + bucket.name + s3_path,
