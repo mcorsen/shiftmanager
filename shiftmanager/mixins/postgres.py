@@ -102,6 +102,119 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
                    manifest_key_path=manifest_key_path,
                    aws_credentials=self.aws_credentials)
 
+    def copy_table_to_s3(self,
+                         bucket_name,
+                         key_prefix,
+                         pg_table_name=None,
+                         pg_select_statement=None,
+                         temp_file_dir=None,
+                         cleanup_s3=True,
+                         line_bytes=104857600,
+                         canned_acl=None):
+        """
+        Writes the contents of a Postgres table to S3.
+
+        The approach here attempts to maximize speed and minimize local
+        disk usage. The fastest method of extracting data from Postgres
+        is the COPY command, which we use here, but pipe the output to
+        the ``split`` and ``gzip`` shell utilities to create a series of
+        compressed files. As files are created, a separate thread uploads
+        them to S3 and removes them from local disk.
+
+        Due to the use of external shell utilities, this function can
+        only run on an operating system with GNU core-utils installed
+        (available by default on Linux, and via homebrew on MacOS).
+
+        Parameters
+        ----------
+        bucket_name: str
+            The name of the S3 bucket to be written to
+        key_prefix: str
+            The key path within the bucket to write to
+        pg_table_name: str
+            Optional Postgres table name to be written to json if user
+            does not want to specify subset
+        pg_select_statement: str
+            Optional select statement if user wants to specify subset of table
+        temp_file_dir: str
+            Optional Specify location of temporary files
+        cleanup_s3: bool
+            Optional Clean up S3 location on failure. Defaults to True.
+        line_bytes: int
+            The maximum number of bytes to write to a single file
+            (before compression); defaults to 100 MB
+        canned_acl: str
+            A canned ACL to apply to objects uploaded to S3
+
+        Returns
+        -------
+        (Final key prefix, List of S3 keys)
+        """
+        bucket = self.get_bucket(bucket_name)
+
+        final_key_prefix = key_prefix
+        if not key_prefix.endswith("/"):
+            final_key_prefix += "/"
+
+        if pg_select_statement is None and pg_table_name is not None:
+            pg_table_or_select = pg_table_name
+        elif pg_select_statement is not None and pg_table_name is None:
+            pg_table_or_select = '(' + pg_select_statement + ')'
+        else:
+            ValueError("Exactly one of pg_table_name or pg_select_statement "
+                       "must be specified.")
+
+        tmpdir = tempfile.mkdtemp(dir=temp_file_dir)
+
+        # Here, we build a COPY statement that sends output into a Unix
+        # pipeline. We use SQL dollar-quoting ($$) to avoid escaping quotes.
+        # It goes through `split` and `gzip` to output compressed files.
+        # The `sed` invocation at the end makes up for a quirk in Postgres
+        # JSON output where backslashes are improperly doubled; for every pair
+        # of backslashes we substitute a single backslash. Due to multiple
+        # levels of quoting, a single backslash actually appears as 4
+        # backslashes in the sed invocation.
+        copy_statement = (
+            r"COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
+            r"TO PROGRAM $$"
+            r"split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
+            r"""--filter='sed "s/\\\\\\\\/\\\\/g" | gzip > $FILE.json.gz'"""
+            r"$$"
+        ).format(pg_table_or_select=pg_table_or_select,
+                 tmpdir=tmpdir, line_bytes=line_bytes)
+
+        # Kick off a thread to upload files as they're produced
+        s3_thread = S3UploaderThread(tmpdir, bucket, final_key_prefix,
+                                     canned_acl)
+
+        try:
+            s3_thread.start()
+            self.pg_execute_and_commit_single_statement(copy_statement)
+            print("Finished extracting data from Postgres. "
+                  "Waiting on uploads...")
+            s3_thread.finish_uploads_and_exit()
+            while s3_thread.is_alive():
+                # We call join() in a loop with a 1 second timeout so that
+                # a user hitting Ctrl-C will allow a KeyboardInterrupt
+                # to be issued and we can exit. If we simply call join(),
+                # it blocks and no exceptions can reach the main program.
+                s3_thread.join(1)
+            s3_keys = s3_thread.s3_keys
+        except:
+            s3_thread.abort()
+            print("Error while pulling data out of PostgreSQL")
+            if cleanup_s3:
+                print("Cleaning up S3...")
+                for key in s3_thread.s3_keys:
+                    bucket.delete_key(key)
+            else:
+                print("Leaving files in place...")
+            raise
+
+        print("Uploads all done. Cleaning up temp directory " + tmpdir)
+        shutil.rmtree(tmpdir)
+        return final_key_prefix, s3_keys
+
     def copy_table_to_redshift(self,
                                redshift_table_name,
                                bucket_name,
@@ -163,75 +276,15 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
         canned_acl: str
             A canned ACL to apply to objects uploaded to S3
         """
+        backfill_timestamp = datetime.datetime.utcnow().strftime(
+            "%Y-%m-%d_%H%M%S")
         if not self.table_exists(redshift_table_name):
             raise ValueError("This table_name does not exist in Redshift!")
 
         bucket = self.get_bucket(bucket_name)
-
-        backfill_timestamp = datetime.datetime.utcnow().strftime(
-            "%Y-%m-%d_%H%M%S")
-
-        final_key_prefix = key_prefix
-        if not key_prefix.endswith("/"):
-            final_key_prefix += "/"
-
-        if pg_select_statement is None and pg_table_name is not None:
-            pg_table_or_select = pg_table_name
-        elif pg_select_statement is not None and pg_table_name is None:
-            pg_table_or_select = '(' + pg_select_statement + ')'
-        else:
-            ValueError("Exactly one of pg_table_name or pg_select_statement "
-                       "must be specified.")
-
-        tmpdir = tempfile.mkdtemp(dir=temp_file_dir)
-
-        # Here, we build a COPY statement that sends output into a Unix
-        # pipeline. We use SQL dollar-quoting ($$) to avoid escaping quotes.
-        # It goes through `split` and `gzip` to output compressed files.
-        # The `sed` invocation at the end makes up for a quirk in Postgres
-        # JSON output where backslashes are improperly doubled; for every pair
-        # of backslashes we substitute a single backslash. Due to multiple
-        # levels of quoting, a single backslash actually appears as 4
-        # backslashes in the sed invocation.
-        copy_statement = (
-            r"COPY (SELECT row_to_json(x) FROM ({pg_table_or_select}) AS x) "
-            r"TO PROGRAM $$"
-            r"split - {tmpdir}/chunk_ --line-bytes={line_bytes} "
-            r"""--filter='sed "s/\\\\\\\\/\\\\/g" | gzip > $FILE.json.gz'"""
-            r"$$"
-        ).format(pg_table_or_select=pg_table_or_select,
-                 tmpdir=tmpdir, line_bytes=line_bytes)
-
-        # Kick off a thread to upload files as they're produced
-        s3_thread = S3UploaderThread(tmpdir, bucket, final_key_prefix,
-                                     canned_acl)
-
-        try:
-            s3_thread.start()
-            self.pg_execute_and_commit_single_statement(copy_statement)
-            print("Finished extracting data from Postgres. "
-                  "Waiting on uploads...")
-            s3_thread.finish_uploads_and_exit()
-            while s3_thread.is_alive():
-                # We call join() in a loop with a 1 second timeout so that
-                # a user hitting Ctrl-C will allow a KeyboardInterrupt
-                # to be issued and we can exit. If we simply call join(),
-                # it blocks and no exceptions can reach the main program.
-                s3_thread.join(1)
-            s3_keys = s3_thread.s3_keys
-        except:
-            s3_thread.abort()
-            print("Error while pulling data out of PostgreSQL.")
-            if cleanup_s3:
-                print("Cleaning up S3...")
-                for key in s3_thread.s3_keys:
-                    bucket.delete_key(key)
-            else:
-                print("Leaving files in place...")
-            raise
-
-        print("Uploads all done. Cleaning up temp directory " + tmpdir)
-        shutil.rmtree(tmpdir)
+        final_key_prefix, s3_keys = self.copy_table_to_s3(
+            bucket_name, key_prefix, pg_table_name, pg_select_statement,
+            temp_file_dir, cleanup_s3, line_bytes, canned_acl)
 
         manifest_entries = [{
             'url': 's3://' + bucket.name + s3_path,
