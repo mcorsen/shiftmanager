@@ -169,7 +169,7 @@ altering the reflected :class:`~sqlalchemy.schema.Table`::
   INSERT INTO my_schema.my_table SELECT * from my_schema.my_table$outgoing;
   DROP TABLE my_schema.my_table$outgoing;
 
-If you pass ``analyze_compress=True`` to `deep_copy`, compression encodings
+If you pass ``analyze_compression=True`` to `deep_copy`, compression encodings
 will be updated in the resultant table based on results of running
 ANALYZE COMPRESSION to determine optimal encodings for the existing data.
 
