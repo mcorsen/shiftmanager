@@ -189,3 +189,41 @@ def test_copy_to_json(shift, json_data, tmpdir):
     bukkit = shift.s3_conn.get_bucket("com.simple.mock")
     check_key_calls(bukkit.s3keys, 10)
     assert len(os.listdir(dpath)) == 10
+
+
+def test_unload_table_to_s3(shift):
+    bucket = 'com.simple.mock'
+    keypath = 'tmp/tests/'
+    table = 'foo_table'
+
+    expect_col_str = r"""'{' ||
+    CASE
+        WHEN "foo" IS NULL THEN '"foo": null'
+        WHEN "foo" THEN '"foo": true'
+        ELSE '"foo": false'
+    END || ', ' ||
+    CASE
+        WHEN "bar" IS NULL THEN '"bar": null'
+        ELSE '"bar": ' || bar
+    END || ', ' ||
+    CASE
+        WHEN "baz" IS NULL THEN '"baz": null'
+        ELSE '"baz": "' || REPLACE(REPLACE("baz", '\\', '\\\\'),
+                                   '"', '\\"') || '"'
+    END || '}'
+    """
+    expect_s3_path = 's3://' + os.path.join(bucket, keypath, table + '/')
+    expect_creds = ("aws_access_key_id={};aws_secret_access_key={};token={}"
+                    .format("access_key", "secret_key", "security_token"))
+    expect_options = "MANIFEST GZIP ESCAPE ALLOWOVERWRITE"
+
+    expected = """
+    UNLOAD ($$SELECT {col_str} FROM {table}$$)
+    TO '{s3_path}'
+    CREDENTIALS '{creds}'
+    {options};
+    """.format(table=table, col_str=expect_col_str, s3_path=expect_s3_path,
+               creds=expect_creds, options=expect_options)
+
+    shift.unload_table_to_s3(bucket, keypath, table)
+    assert_execute(shift, expected)

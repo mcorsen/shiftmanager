@@ -111,6 +111,14 @@ def id_cols(self, table_name):
         return {'id_col'}
 
 
+def columns_and_types(self, table, col_str='*'):
+    return [
+        ('foo', 'boolean'),
+        ('bar', 'numeric(23,2)'),
+        ('baz', 'character varying(256)')
+    ]
+
+
 @pytest.fixture
 def shift(monkeypatch, mock_connection, mock_s3):
     """Patch psycopg2 with connection mocks, return conn"""
@@ -122,6 +130,8 @@ def shift(monkeypatch, mock_connection, mock_s3):
     monkeypatch.setattr('shiftmanager.Redshift.mogrify', mogrify)
     monkeypatch.setattr('shiftmanager.Redshift.execute', MagicMock())
     monkeypatch.setattr('shiftmanager.Redshift._get_identity_columns', id_cols)
+    monkeypatch.setattr(
+        'shiftmanager.Redshift._get_columns_and_types', columns_and_types)
     shift = rs.Redshift("", "", "", "",
                         aws_access_key_id="access_key",
                         aws_secret_access_key="secret_key",
