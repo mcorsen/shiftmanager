@@ -420,7 +420,7 @@ class S3Mixin(object):
 
     @check_s3_connection
     def unload_table_to_s3(self, bucket, keypath, table, col_str='*',
-                           to_json=True, options=None):
+                           where=None, to_json=True, options=None):
         """
         Given a table in Redshift, UNLOAD it to S3
 
@@ -435,6 +435,9 @@ class S3Mixin(object):
         col_str : str
             Comma separated string of columns to unload
             Defaults to '*'
+        where : str
+            SQL where clause string to filter select statement in unload
+            Defaults to None, meaning no WHERE clause is applied
         to_json: boolean
             Defaults to True
         options : str
@@ -464,13 +467,18 @@ class S3Mixin(object):
         else:
             cols = col_str
 
+        select = "SELECT {col_str} FROM {table} ".format(
+            col_str=cols, table=table)
+        if where is not None:
+            select += where
+
         statement = """
-        UNLOAD ($$SELECT {col_str} FROM {table}$$)
+        UNLOAD ($${select}$$)
         TO '{s3_path}'
         CREDENTIALS '{creds}'
         {options};
-        """.format(table=table, col_str=cols, s3_path=s3_table_path,
-                   creds=creds, options=options)
+        """.format(select=select.strip(), s3_path=s3_table_path, creds=creds,
+                   options=options)
 
         print("Performing UNLOAD...")
         self.execute(statement)
