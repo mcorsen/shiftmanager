@@ -204,7 +204,7 @@ def test_unload_table_to_s3(shift):
     END || ', ' ||
     CASE
         WHEN "bar" IS NULL THEN '"bar": null'
-        ELSE '"bar": ' || bar
+        ELSE '"bar": ' || "bar"
     END || ', ' ||
     CASE
         WHEN "baz" IS NULL THEN '"baz": null'
@@ -215,7 +215,7 @@ def test_unload_table_to_s3(shift):
     expect_s3_path = 's3://' + os.path.join(bucket, keypath, table + '/')
     expect_creds = ("aws_access_key_id={};aws_secret_access_key={};token={}"
                     .format("access_key", "secret_key", "security_token"))
-    expect_options = "MANIFEST GZIP ESCAPE ALLOWOVERWRITE"
+    expect_options = "MANIFEST GZIP ALLOWOVERWRITE"
 
     expected = """
     UNLOAD ($$SELECT {col_str} FROM {table}$$)

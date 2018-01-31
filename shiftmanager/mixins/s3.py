@@ -445,7 +445,6 @@ class S3Mixin(object):
             Defaults to None and the following options are used:
             - MANIFEST
             - GZIP
-            - ESCAPE
             - ALLOWOVERWRITE
         """
         s3_table_path = 's3://' + os.path.join(bucket, keypath, table + '/')
@@ -459,7 +458,7 @@ class S3Mixin(object):
             if self.security_token:
                 creds += ';token={}'.format(self.security_token)
         if not options:
-            options = "MANIFEST GZIP ESCAPE ALLOWOVERWRITE"
+            options = "MANIFEST GZIP ALLOWOVERWRITE"
 
         if to_json:
             columns_and_types = self._get_columns_and_types(table, col_str)
@@ -513,7 +512,7 @@ class S3Mixin(object):
             case = r"""
             CASE
                 WHEN "{col}" IS NULL THEN '"{col}": null'
-                ELSE '"{col}": ' || {col}
+                ELSE '"{col}": ' || "{col}"
             END"""
         else:
             case = r"""
