@@ -457,8 +457,11 @@ class S3Mixin(object):
                              self.aws_secret_access_key))
             if self.security_token:
                 creds += ';token={}'.format(self.security_token)
+
         if not options:
             options = "MANIFEST GZIP ALLOWOVERWRITE"
+        if self._diststyle(table) == 'ALL':
+            options += ' PARALLEL OFF'
 
         if to_json:
             columns_and_types = self._get_columns_and_types(table, col_str)
@@ -528,3 +531,13 @@ class S3Mixin(object):
                           'real', 'smallint'}
         return any(no_quote_type in col_type
                    for no_quote_type in no_quote_types)
+
+    def _diststyle(self, table):
+        query = """
+        SELECT diststyle
+        FROM svv_table_info
+        WHERE "table" = '{table}'
+        """
+        with self.connection as conn, conn.cursor() as cur:
+            cur.execute(query.format(table=table))
+            return cur.fetchone()[0]
