@@ -208,8 +208,21 @@ def test_unload_table_to_s3(shift):
     END || ', ' ||
     CASE
         WHEN "baz" IS NULL THEN '"baz": null'
-        ELSE '"baz": "' || REPLACE(REPLACE("baz", '\\', '\\\\'),
-                                   '"', '\\"') || '"'
+        ELSE '"baz": "' ||
+        REPLACE(
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                REPLACE("baz", '\\', '\\\\'),
+                                               '"', '\\"'),
+                                               '\n', '\\n'),
+                                               '\t', '\\t'),
+                                               '\r', '\\r'),
+                                               '\f', '\\f'),
+                                               '\b', '\\b')
+        || '"'
     END || '}'
     """
     expect_s3_path = 's3://' + os.path.join(bucket, keypath, table + '/')
