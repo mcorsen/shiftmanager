@@ -307,7 +307,7 @@ libpq-connect.html#LIBPQ-PARAMKEYWORDS
 
             print('Writing .manifest file to S3...')
             self.write_string_to_s3(json.dumps(manifest), bucket,
-                                    manifest_key_path)
+                                    manifest_key_path, canned_acl=canned_acl)
             complete_manifest_path = "".join(['s3://', bucket.name,
                                               manifest_key_path])
             statements = ""
