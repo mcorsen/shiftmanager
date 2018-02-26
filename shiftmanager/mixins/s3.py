@@ -131,7 +131,7 @@ class S3Mixin(object):
             key.close()
         return key
 
-    def write_string_to_s3(self, chunk, bucket, s3_key_path):
+    def write_string_to_s3(self, chunk, bucket, s3_key_path, canned_acl=None):
         """
         Given a string chunk that represents a piece of a CSV file, write
         the chunk to an S3 key.
@@ -147,6 +147,8 @@ class S3Mixin(object):
         """
         boto_key = bucket.new_key(s3_key_path)
         boto_key.set_contents_from_string(chunk, encrypt_key=True)
+        if canned_acl:
+            boto_key.set_canned_acl(canned_acl)
 
     def write_file_to_s3(self, f, bucket, s3_key_path):
         """
