@@ -422,7 +422,8 @@ class S3Mixin(object):
 
     @check_s3_connection
     def unload_table_to_s3(self, bucket, keypath, table,
-                           schema=None, col_str='*', where=None, to_json=True, options=None):
+                           schema=None, col_str='*', where=None,
+                           to_json=True, options=None):
         """
         Given a table in Redshift, UNLOAD it to S3
 
@@ -499,14 +500,14 @@ class S3Mixin(object):
         SELECT "column", "type"
         FROM pg_table_def
         WHERE tablename = '{table}'
-        """
+        """.format(table=table)
         if schema:
-            query += """AND schemaname = '{schema}'"""
+            query += """AND schemaname = '{schema}'""".format(schema=schema)
         if col_str != '*':
-            query += """AND "column" IN ({columns})"""
+            query += """AND "column" IN ({columns})""".format(columns=col_str)
         with self.connection as conn:
             with conn.cursor() as cur:
-                cur.execute(query.format(table=table, schema=schema, columns=col_str))
+                cur.execute(query)
                 return cur.fetchall()
 
     def _json_col_str(self, columns_and_types):
