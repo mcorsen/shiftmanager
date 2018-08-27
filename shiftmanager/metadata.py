@@ -9,14 +9,14 @@ Information describing the project.
 package = 'shiftmanager'
 project = 'shiftmanager'
 project_no_spaces = project.replace(' ', '')
-version = '0.7.0'
+version = '0.7.1'
 description = 'Management tools for Amazon Redshift'
 authors = ['Jeff Klukas', 'Rob Story', 'Meli Lewis',
            'Allison Keene', 'Xavier Stevens', 'KF Fellows',
-           'Andrew Harris']
+           'Andrew Harris', 'Mikena Wood']
 authors_string = ', '.join(authors)
 emails = ['klukas@simple.com', 'allison@simple.com', 'xavier@simple.com',
-          'andrew@simple.com']
+          'andrew@simple.com', 'mikena@simple.com']
 license = 'BSD'
 copyright = '2018 ' + authors_string
 url = 'https://shiftmanager.readthedocs.org'
