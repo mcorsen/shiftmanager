@@ -495,7 +495,7 @@ class S3Mixin(object):
         print("Performing UNLOAD...")
         self.execute(statement)
 
-    def _get_columns_and_types(self, table, schema, col_str='*'):
+    def _get_columns_and_types(self, table, schema=None, col_str='*'):
         query = """
         SELECT "column", "type"
         FROM pg_table_def
@@ -557,7 +557,7 @@ class S3Mixin(object):
         return any(no_quote_type in col_type
                    for no_quote_type in no_quote_types)
 
-    def _diststyle(self, table, schema):
+    def _diststyle(self, table, schema=None):
         query = """
         SELECT diststyle
         FROM svv_table_info
