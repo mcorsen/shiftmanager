@@ -421,8 +421,8 @@ class S3Mixin(object):
                 bukkit.delete_keys(s3_sweep)
 
     @check_s3_connection
-    def unload_table_to_s3(self, bucket, keypath, table, col_str='*',
-                           where=None, to_json=True, options=None):
+    def unload_table_to_s3(self, bucket, keypath, table,
+                           schema=None, col_str='*', where=None, to_json=True, options=None):
         """
         Given a table in Redshift, UNLOAD it to S3
 
@@ -434,6 +434,9 @@ class S3Mixin(object):
             S3 key path for writes
         table : str
             Table name for UNLOAD
+        schema : str
+            Schema that table resides in
+            Defaults to None
         col_str : str
             Comma separated string of columns to unload
             Defaults to '*'
@@ -449,6 +452,8 @@ class S3Mixin(object):
             - GZIP
             - ALLOWOVERWRITE
         """
+
+        # leaving this without schema name to not break backwards compatibility
         s3_table_path = 's3://' + os.path.join(bucket, keypath, table + '/')
 
         if self.aws_role_name:
@@ -462,7 +467,7 @@ class S3Mixin(object):
 
         if not options:
             options = "MANIFEST GZIP ALLOWOVERWRITE"
-        if self._diststyle(table) == 'ALL':
+        if self._diststyle(table, schema) == 'ALL':
             options += ' PARALLEL OFF'
 
         if to_json:
@@ -471,6 +476,8 @@ class S3Mixin(object):
         else:
             cols = col_str
 
+        if schema:
+            table = "{schema}.{table}".format(schema=schema, table=table)
         select = "SELECT {col_str} FROM {table} ".format(
             col_str=cols, table=table)
         if where is not None:
@@ -487,17 +494,19 @@ class S3Mixin(object):
         print("Performing UNLOAD...")
         self.execute(statement)
 
-    def _get_columns_and_types(self, table, col_str='*'):
+    def _get_columns_and_types(self, table, schema, col_str='*'):
         query = """
         SELECT "column", "type"
         FROM pg_table_def
         WHERE tablename = '{table}'
         """
+        if schema:
+            query += """AND schemaname = '{schema}'"""
         if col_str != '*':
-            query += """AND "column" IN ({columns})""".format(columns=col_str)
+            query += """AND "column" IN ({columns})"""
         with self.connection as conn:
             with conn.cursor() as cur:
-                cur.execute(query.format(table=table))
+                cur.execute(query.format(table=table, schema=schema, columns=col_str))
                 return cur.fetchall()
 
     def _json_col_str(self, columns_and_types):
@@ -547,12 +556,14 @@ class S3Mixin(object):
         return any(no_quote_type in col_type
                    for no_quote_type in no_quote_types)
 
-    def _diststyle(self, table):
+    def _diststyle(self, table, schema):
         query = """
         SELECT diststyle
         FROM svv_table_info
         WHERE "table" = '{table}'
         """
+        if schema:
+            query += """AND "schema" = '{schema}'"""
         with self.connection as conn, conn.cursor() as cur:
-            cur.execute(query.format(table=table))
+            cur.execute(query.format(table=table, schema=schema))
             return cur.fetchone()[0]
