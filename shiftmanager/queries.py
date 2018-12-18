@@ -11,6 +11,7 @@ MANIFEST GZIP TIMEFORMAT 'auto'
 """
 
 all_privileges = """\
+SET search_path={search_path};
 SELECT
   c.relkind,
   n.oid as "schema_oid",

@@ -4,7 +4,7 @@ mock==2.0.0
 pbr==3.1.1
 psycopg2==2.7.3.2
 six==1.11.0
-SQLAlchemy==1.1.15
+SQLAlchemy==1.1.18
 sqlalchemy-redshift==0.7.0
 sqlalchemy-views==0.2.1
 wheel==0.24.0

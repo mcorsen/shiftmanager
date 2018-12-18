@@ -67,7 +67,7 @@ class ReflectionMixin(object):
         """A Redshift-aware identifier preparer."""
         return self.engine.dialect.identifier_preparer
 
-    def get_table_names(self, schema=None, **kwargs):
+    def get_table_names(self, schema='public', **kwargs):
         """Return a list naming all tables and views defined in *schema*.
         """
         return self.engine.dialect.get_table_names(self.engine, schema,
@@ -99,6 +99,7 @@ class ReflectionMixin(object):
         <http://redshift-sqlalchemy.readthedocs.org/en/latest/ddl-compiler.html>`_
         """
         kw = kwargs.copy()
+        kw['schema'] = kw.get('schema', 'public')
         analyze_compression = kwargs.pop('analyze_compression', None)
         kw['autoload'] = True
         kw['extend_existing'] = kw.get('extend_existing', True)
@@ -115,7 +116,7 @@ class ReflectionMixin(object):
                 col.info['encode'] = 'raw'
         return table
 
-    def reflected_privileges(self, relation, schema=None, use_cache=True):
+    def reflected_privileges(self, relation, schema='public', use_cache=True):
         """Return a SQL str which recreates all privileges for *relation*.
 
         Parameters
@@ -128,9 +129,10 @@ class ReflectionMixin(object):
         use_cache : `bool`
             Use cached results for the privilege query, if available
         """
-        return ';\n'.join(self._privilege_statements(relation, use_cache))
+        db_object = self._pass_or_reflect(relation, schema)
+        return ';\n'.join(self._privilege_statements(db_object, use_cache))
 
-    def table_definition(self, table, schema=None,
+    def table_definition(self, table, schema='public',
                          copy_privileges=True, use_cache=True,
                          analyze_compression=False):
         """
@@ -166,7 +168,7 @@ class ReflectionMixin(object):
                 batch += ';\n'.join(priv_statements).strip()
         return batch
 
-    def view_definition(self, view, schema=None,
+    def view_definition(self, view, schema='public',
                         copy_privileges=True, use_cache=True,
                         execute=False,
                         **kwargs):
@@ -203,7 +205,7 @@ class ReflectionMixin(object):
                 batch += ';\n'.join(priv_statements)
         return self.mogrify(batch, None, execute)
 
-    def deep_copy(self, table, schema=None,
+    def deep_copy(self, table, schema='public',
                   copy_privileges=True, use_cache=True,
                   cascade=False, distinct=False,
                   analyze_compression=False,
@@ -265,7 +267,7 @@ class ReflectionMixin(object):
         outgoing_name = table_name + '$outgoing'
         outgoing_name_simple = table.name + '$outgoing'
         table_definition = '\n' + self.table_definition(
-            table, None, copy_privileges, use_cache, analyze_compression)
+            table, schema, copy_privileges, use_cache, analyze_compression)
         insert_statement = "\nINSERT INTO {table_name} \nSELECT "
         identity_cols = self._get_identity_columns(table.name) or {}
         col_str = ',\n\t'.join('"%s"' % col.name
@@ -303,8 +305,9 @@ class ReflectionMixin(object):
         ) + ';'
         return self.mogrify(batch, None, execute)
 
-    def _cache_privileges(self):
-        result = self.engine.execute(queries.all_privileges)
+    def _cache_privileges(self, schema='public'):
+        result = self.engine.execute(queries.all_privileges.format(search_path=schema))
+
         self._all_privileges = {}
         for r in result:
             key = _get_relation_key(r.relname, r.schema)
@@ -312,7 +315,7 @@ class ReflectionMixin(object):
 
     def _privilege_statements(self, relation, use_cache):
         if not use_cache or not self._all_privileges:
-            self._cache_privileges()
+            self._cache_privileges(relation.schema)
         priv_info = self._all_privileges[relation.key]
         relation_name = self.preparer.format_table(relation)
         statements = [("ALTER {type} {relation_name} OWNER TO {owner}"
